@@ -48,6 +48,7 @@ class SMPL(nn.Module):
 
     def __init__(
         self, model_path: str,
+	kid_template_path: str = '',
         data_struct: Optional[Struct] = None,
         create_betas: bool = True,
         betas: Optional[Tensor] = None,
@@ -62,6 +63,7 @@ class SMPL(nn.Module):
         batch_size: int = 1,
         joint_mapper=None,
         gender: str = 'neutral',
+        age: str = 'adult',
         vertex_ids: Dict[str, int] = None,
         v_template: Optional[Union[Tensor, Array]] = None,
         **kwargs
@@ -120,6 +122,7 @@ class SMPL(nn.Module):
         '''
 
         self.gender = gender
+        self.age = age
 
         if data_struct is None:
             if osp.isdir(model_path):
@@ -136,13 +139,19 @@ class SMPL(nn.Module):
 
         super(SMPL, self).__init__()
         self.batch_size = batch_size
-        shapedirs = data_struct.shapedirs
-        if (shapedirs.shape[-1] < self.SHAPE_SPACE_DIM):
-            print(f'WARNING: You are using a {self.name()} model, with only'
-                  ' 10 shape coefficients.')
-            num_betas = min(num_betas, 10)
+
+        if self.age=='kid':
+            import trimesh
+
+            v_template_smil= trimesh.load(kid_template_path, process=False).vertices
+
+            v_template_smil -= np.mean(v_template_smil, axis=0)
+            v_template_smil = np.expand_dims(v_template_smil,axis=2)
+            v_template_diff = v_template_smil - np.expand_dims(data_struct.v_template,axis=2)
+            shapedirs = np.concatenate((data_struct.shapedirs[:,:,:num_betas],v_template_diff),axis=2)
+            num_betas=num_betas+1
         else:
-            num_betas = min(num_betas, self.SHAPE_SPACE_DIM)
+            shapedirs=data_struct.shapedirs
 
         self._num_betas = num_betas
         shapedirs = shapedirs[:, :, :num_betas]
@@ -487,6 +496,7 @@ class SMPLH(SMPL):
 
     def __init__(
         self, model_path,
+        kid_template_path,
         data_struct: Optional[Struct] = None,
         create_left_hand_pose: bool = True,
         left_hand_pose: Optional[Tensor] = None,
@@ -497,6 +507,7 @@ class SMPLH(SMPL):
         flat_hand_mean: bool = False,
         batch_size: int = 1,
         gender: str = 'neutral',
+        age: str = 'adult',
         dtype=torch.float32,
         vertex_ids=None,
         use_compressed: bool = True,
@@ -566,11 +577,12 @@ class SMPLH(SMPL):
 
         if vertex_ids is None:
             vertex_ids = VERTEX_IDS['smplh']
-
+        print(kid_template_path)
         super(SMPLH, self).__init__(
             model_path=model_path,
+            kid_template_path=kid_template_path,
             data_struct=data_struct,
-            batch_size=batch_size, vertex_ids=vertex_ids, gender=gender,
+            batch_size=batch_size, vertex_ids=vertex_ids, gender=gender,age=age,
             use_compressed=use_compressed, dtype=dtype, ext=ext, **kwargs)
 
         self.use_pca = use_pca
@@ -877,6 +889,7 @@ class SMPLX(SMPLH):
 
     def __init__(
         self, model_path: str,
+	kid_template_path: str = '',
         num_expression_coeffs: int = 10,
         create_expression: bool = True,
         expression: Optional[Tensor] = None,
@@ -889,6 +902,7 @@ class SMPLX(SMPLH):
         use_face_contour: bool = False,
         batch_size: int = 1,
         gender: str = 'neutral',
+        age: str = 'adult',
         dtype=torch.float32,
         ext: str = 'npz',
         **kwargs
@@ -958,11 +972,12 @@ class SMPLX(SMPLH):
 
         super(SMPLX, self).__init__(
             model_path=model_path,
+            kid_template_path=kid_template_path,
             data_struct=data_struct,
             dtype=dtype,
             batch_size=batch_size,
             vertex_ids=VERTEX_IDS['smplx'],
-            gender=gender, ext=ext,
+            gender=gender,age=age, ext=ext,
             **kwargs)
 
         lmk_faces_idx = data_struct.lmk_faces_idx
@@ -1019,10 +1034,7 @@ class SMPLX(SMPLH):
                                            requires_grad=True)
             self.register_parameter('reye_pose', reye_pose_param)
 
-        shapedirs = data_struct.shapedirs
-        if len(shapedirs.shape) < 3:
-            shapedirs = shapedirs[:, :, None]
-        if (shapedirs.shape[-1] < self.SHAPE_SPACE_DIM +
+        if (data_struct.shapedirs.shape[-1] < self.SHAPE_SPACE_DIM +
                 self.EXPRESSION_SPACE_DIM):
             print(f'WARNING: You are using a {self.name()} model, with only'
                   ' 10 shape and 10 expression coefficients.')
@@ -1037,7 +1049,7 @@ class SMPLX(SMPLH):
 
         self._num_expression_coeffs = num_expression_coeffs
 
-        expr_dirs = shapedirs[:, :, expr_start_idx:expr_end_idx]
+        expr_dirs = data_struct.shapedirs[:, :, expr_start_idx:expr_end_idx]
         self.register_buffer(
             'expr_dirs', to_tensor(to_np(expr_dirs), dtype=dtype))
 
